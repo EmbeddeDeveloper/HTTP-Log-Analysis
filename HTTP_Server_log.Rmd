@@ -1,0 +1,184 @@
+---
+title: "HTTP Server Log"
+author: "Vasudeo Maurya"
+date: "25 September 2018"
+output: html_document
+---
+
+**Kint Opts**
+```{r setup, include=FALSE}
+# for development
+knitr::opts_chunk$set(echo=TRUE, eval=TRUE, error=TRUE, warning=TRUE, message=TRUE, cache=FALSE, tidy=FALSE, fig.path='figures/')
+# for production
+#knitr::opts_chunk$set(echo=TRUE, eval=TRUE, error=FALSE, warning=FALSE, message=FALSE, cache=FALSE, tidy=FALSE, fig.path='figures/')
+```
+**Load Libs**   
+```{r load_libs, echo=TRUE}
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(wordcloud)
+library(tidyverse)
+```
+**Read Data**   
+```{r read_data, echo=TRUE}
+dfrDataFile <- read_log("./data/apache_dataset.log",skip =0,col_names = FALSE)
+head(dfrDataFile)
+```
+**Rename Column**   
+```{r rename_column, echo=TRUE}
+df <- rename(dfrDataFile, RemoteHost=X1,Id=X2,HTTPUser=X3,DateTime=X4,RequestLine=X5,StatusCode=X6,Size=X7)
+```
+
+**Dataframe Stucture**   
+```{r structure, echo=TRUE}
+str(df)
+```
+**Splitting Date and Time**   
+```{r split_date_time, echo=TRUE}
+Hours <- format(strptime(df$DateTime,"%d/%B/%Y:%H:%M:%S") ,format = "%H:%M:%S")
+Dates <- format(strptime(df$DateTime,"%d/%B/%Y:%H:%M:%S") ,format = "%d/%b/%Y")
+#adding Dates to df as column
+df$Dates <- Dates
+#adding Hours to df as column
+df$Hours <- Hours
+#Below outputs the dates in the international standard format
+df$Dates=as.Date(df$Dates,"%d/%b/%Y")
+##Dropping DateTime Column after splitting date and time from df
+df <- subset( df, select = -DateTime)
+head(df)
+```
+**Graph showing statuscode**   
+```{r graph_status, echo=TRUE}
+ggplot(data=df, aes(x=format(StatusCode))) + geom_bar() + xlab("Status") + ylab("Count") + ggtitle("Status")
+```
+**Graph showing traffic to site**   
+```{r graph_traffic_to_site, echo=TRUE}
+reqs = as.data.frame(table(df$Dates))
+ggplot(data = reqs, aes(x=as.Date(Var1), y=Freq)) + geom_point() + geom_line(colour = "blue") + xlab("Month") + ylab("Requests") + labs(title="Traffic to Site")
+```
+**Selecting data with successful statuscode**   
+```{r status_200, echo=TRUE}
+df_conn <- filter(df, StatusCode == "200")
+
+#splitting date into day/month/year as separate column
+df_conn <- data.frame(df_conn,
+                    Year = as.numeric(format(df_conn$Dates, format = "%Y")),
+                    Month = as.numeric(format(df_conn$Dates, format = "%m")),
+                    Day = as.numeric(format(df_conn$Dates, format = "%d")))
+head(df)
+```
+**Graph showing total hits per day**   
+```{r hits_per_day, echo=TRUE}
+thpd = as.data.frame(table(df_conn$Day,df_conn$Month))
+thpd <- rename(thpd, Days=Var1,Months=Var2)
+ggplot(data = thpd, aes(x=Days, y=Freq,group=Months,colour=Months)) + geom_point() + geom_line() + xlab("Day") + ylab("Freq") + labs(title="Total Hits Per Day")
+```
+**Graph showing Connection to Server Per Month**   
+```{r connection_server, echo=TRUE}
+dfcts <- data.frame(table(df_conn$RemoteHost,df_conn$Month))
+dfcts.Sort <- arrange(dfcts,desc(Freq))
+dfcts.Sort <- rename(dfcts.Sort,Host=Var1,Month=Var2)
+head(dfcts.Sort)
+ggplot(data = dfcts.Sort, aes(x=Month, y=Freq)) + geom_bar(stat = "identity") + xlab("Months") + ylab("Freq") + labs(title="Connection to Server Per Month")
+```
+**Page requested from server**   
+```{r page_req, echo=TRUE}
+dfreq <- data.frame(table(df_conn$RequestLine,df_conn$Month))
+dfreq.Sort <- arrange(dfreq,desc(Freq)) 
+dfreq.Sort <- rename(dfreq.Sort,Page=Var1,Month=Var2)
+head(dfreq.Sort)
+```
+**Data downloaded by each individual host**   
+```{r host_size, echo=TRUE}
+dfSize <- aggregate(Size ~ RemoteHost + Month, data = df_conn, sum)
+dfSize <- filter(dfSize, !grepl("0",dfSize$Size))
+dfSize.Sort <- arrange(dfSize,desc(Size))
+head(dfSize.Sort)
+ggplot(data=dfSize.Sort, aes(x=format(Month))) + geom_bar() + xlab("Months") + ylab("Download Size") + ggtitle("Total Download Size Per Month")
+```
+**Download Size Per Day**   
+```{r size_day, echo=TRUE}
+dfSizepd <- aggregate(Size ~ Day + Month, data = df_conn, sum)
+dfSizepd <- filter(dfSizepd, !grepl("0",dfSizepd$Size))
+ggplot(data = dfSizepd, aes(x=Day, y=Size,group=Month,colour=Month)) + geom_point() + geom_line() + xlab("Day") + ylab("Download Size") + labs(title="Total Download Size Per Day")
+```
+
+**Data Sent Out Per Month**   
+```{r size_month, echo=TRUE}
+dfPageSize <- aggregate(Size ~ RequestLine + Month, data = df_conn, sum)
+dfPageSize <- filter(dfPageSize, !grepl("0",dfPageSize$Size))
+dfPageSize.Sort <- arrange(dfPageSize,desc(Size))
+head(dfPageSize.Sort)
+ggplot(data=dfPageSize.Sort, aes(x=format(Month))) + geom_bar() + xlab("Months") + ylab("Data Sent Out") + ggtitle("Total Data Sent Out Per Month")
+```
+**Which host has connected the maximum number of times to our server? Give the host name & count of connections from that host.**   
+```{r q1, echo=TRUE}
+RemoteHost.Sort <- data.frame(table(df_conn$RemoteHost))
+r <- arrange(RemoteHost.Sort,desc(Freq))
+head(r)
+max(r$Freq)
+```
+
+**Which page that has been requested the maximum number of times from our server? Give the page name & count of the times the page was requested.**
+```{r q2, echo=TRUE}
+RequestLine.Sort <-data.frame(table(df_conn$RequestLine))
+r <- arrange(RequestLine.Sort,desc(Freq))
+r <- filter(r, !grepl("GET / HTTP/1.0",r$Var1))
+head(r)
+max(r$Freq)
+```
+
+**How many unique hosts have connected to our server? Give counts.**
+```{r q3, echo=TRUE}
+length(unique(df_conn$RemoteHost))  
+```
+
+**How many unique pages have been requested from our server? Give counts.**
+```{r q4, echo=TRUE}
+length(unique(df_conn$RequestLine)) 
+```
+
+**Which page has caused maximum data transfer from our server? Give page name & the data transfer for the page.**
+```{r q5, echo=TRUE}
+r <- summarise(group_by(dfPageSize, RequestLine), sum(Size))
+r <- arrange(r,desc(`sum(Size)`))
+r$RequestLine[1]
+max(r$`sum(Size)`)
+```
+
+**Which host has caused maximum data transfer from our server? Give host name & the data transfer for the host.**
+```{r q6, echo=TRUE}
+r <- summarise(group_by(df_conn,RemoteHost ), sum(Size))
+#r <- filter(r, !grepl(0,r$`sum(Size)`))
+r <- arrange(r,desc(`sum(Size)`))
+r$RemoteHost[1]
+head(r)
+```
+**Which page has maximum download size from our server? Give page name & the size for the page.**
+```{r q7, echo=TRUE}
+s <- dfPageSize.Sort$RequestLine[1]
+s
+dfPageSize.Sort$Size[1] 
+```
+**What is the download count of the page that has maximum download size from our server? Give page name & download count**
+```{r q8, echo=TRUE}
+cnt_s <- filter(dfPageSize.Sort, grepl(s,dfPageSize.Sort$RequestLine))
+s
+nrow(cnt_s)
+```
+**Which page has minimum download size from our server? Give page name & the size for the page.**
+```{r q9, echo=TRUE}
+dfAscSize.Sort <- arrange(dfPageSize,Size)
+m <- dfAscSize.Sort$RequestLine[1]
+m
+dfAscSize.Sort$Size[1]
+```
+**What is the download count of the page that minimum download size from our server? Give page name & the size for the page.**
+```{r q10, echo=TRUE}
+cnt_m <- filter(dfAscSize.Sort, grepl(m,dfAscSize.Sort$RequestLine))
+nrow(cnt_m)
+m
+dfAscSize.Sort$Size[1]
+```
+
